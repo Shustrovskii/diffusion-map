@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>扩散模型 (Diffusion Model) 底层原理拓扑图</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --panel-bg: #1e293b;
+            --border-color: #334155;
+            
+            /* Node Category Colors */
+            --color-core: #a855f7;    /* 紫色: 核心 */
+            --color-process: #3b82f6; /* 蓝色: 过程 */
+            --color-data: #10b981;    /* 绿色: 数据 */
+            --color-model: #f59e0b;   /* 橙色: 模型/组件 */
+            --color-theory: #ef4444;  /* 红色: 理论 */
+            --color-variant: #06b6d4; /* 青色: 变体/应用 */
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            overflow: hidden;
+            display: flex;
+            height: 100vh;
+        }
+
+        #graph-container {
+            flex: 1;
+            position: relative;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+
+        svg:active {
+            cursor: grabbing;
+        }
+
+        /* UI Elements */
+        .overlay-ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+        }
+
+        h1 {
+            margin: 0 0 8px 0;
+            font-size: 24px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+
+        .instructions {
+            display: inline-block;
+            background: rgba(30, 41, 59, 0.8);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(4px);
+        }
+
+        .instructions span {
+            color: #fbbf24;
+            font-weight: bold;
+        }
+
+        /* Side Panel */
+        #info-panel {
+            width: 320px;
+            background-color: var(--panel-bg);
+            border-left: 1px solid var(--border-color);
+            padding: 24px;
+            box-sizing: border-box;
+            box-shadow: -4px 0 15px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.3s ease;
+        }
+
+        #info-panel.hidden {
+            display: none;
+        }
+
+        .panel-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: 12px;
+            color: var(--color-variant);
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 12px;
+        }
+
+        .panel-category {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .panel-desc {
+            font-size: 15px;
+            line-height: 1.6;
+            color: #cbd5e1;
+        }
+
+        .empty-state {
+            color: var(--text-muted);
+            font-style: italic;
+            text-align: center;
+            margin-top: 50px;
+        }
+
+        /* SVG Graph Styles */
+        .node circle {
+            stroke: #fff;
+            stroke-width: 2px;
+            transition: all 0.3s ease;
+        }
+
+        .node circle:hover {
+            stroke: #fbbf24;
+            stroke-width: 4px;
+            filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.5));
+        }
+
+        .node text {
+            font-size: 13px;
+            font-weight: 500;
+            fill: #ffffff;
+            pointer-events: none;
+            text-anchor: middle;
+            text-shadow: 
+                -1px -1px 0 #000,  
+                 1px -1px 0 #000,
+                -1px  1px 0 #000,
+                 1px  1px 0 #000;
+        }
+
+        .link {
+            stroke: #475569;
+            stroke-opacity: 0.6;
+            stroke-width: 2px;
+            fill: none;
+            transition: stroke-opacity 0.3s ease;
+        }
+
+        .link-label {
+            font-size: 11px;
+            fill: #94a3b8;
+            pointer-events: none;
+            text-anchor: middle;
+            paint-order: stroke;
+            stroke: var(--bg-color);
+            stroke-width: 4px;
+            stroke-linecap: butt;
+            stroke-linejoin: miter;
+            transition: opacity 0.3s ease;
+        }
+
+        /* Legend */
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(30, 41, 59, 0.8);
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(4px);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 6px;
+            font-size: 12px;
+        }
+
+        .legend-item:last-child { margin-bottom: 0; }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="graph-container">
+        <div class="overlay-ui">
+            <h1>扩散模型 (Diffusion Model) 拓扑图</h1>
+            <div class="subtitle">底层原理与核心概念逻辑网络</div>
+            <div class="instructions">
+                互动规则：<span>点击</span> 节点高亮关联链路 | <span>拖拽</span> 节点调整布局 | <span>点击空白处</span> 重置视角
+            </div>
+        </div>
+        
+        <div class="legend">
+            <div class="legend-item"><div class="legend-color" style="background: var(--color-core)"></div>核心概念</div>
+            <div class="legend-item"><div class="legend-color" style="background: var(--color-process)"></div>机制过程</div>
+            <div class="legend-item"><div class="legend-color" style="background: var(--color-data)"></div>数据状态</div>
+            <div class="legend-item"><div class="legend-color" style="background: var(--color-model)"></div>网络模型</div>
+            <div class="legend-item"><div class="legend-color" style="background: var(--color-theory)"></div>理论基础</div>
+            <div class="legend-item"><div class="legend-color" style="background: var(--color-variant)"></div>应用与变体</div>
+        </div>
+
+        <svg id="network"></svg>
+    </div>
+
+    <div id="info-panel">
+        <div id="default-msg" class="empty-state">
+            👈 请在左侧图中点击任意节点，<br>查看该概念的详细解释及关联信息。
+        </div>
+        <div id="node-details" style="display: none;">
+            <div class="panel-category" id="detail-category">类别</div>
+            <h2 class="panel-title" id="detail-title">节点名称</h2>
+            <div class="panel-desc" id="detail-desc">详细描述将显示在这里...</div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. 数据定义 (Nodes & Links) ---
+        const groups = {
+            1: { name: "核心概念", color: "#a855f7" },
+            2: { name: "机制过程", color: "#3b82f6" },
+            3: { name: "数据状态", color: "#10b981" },
+            4: { name: "网络模型", color: "#f59e0b" },
+            5: { name: "理论基础", color: "#ef4444" },
+            6: { name: "应用与变体", color: "#06b6d4" }
+        };
+
+        const nodesData = [
+            { id: "扩散模型", group: 1, radius: 28, desc: "生成式人工智能的一种核心范式。它通过学习逐步向数据添加噪声的相反过程，来从纯随机噪声中生成高质量的数据（如图像、音频）。" },
+            
+            { id: "前向过程", group: 2, radius: 22, desc: "也称扩散过程。这是一个固定的、不需要训练的马尔可夫链。它向原始数据中逐步添加微小的高斯噪声，直到数据完全变成无意义的纯噪声。" },
+            { id: "反向过程", group: 2, radius: 22, desc: "也称去噪过程。这是模型需要学习的部分。它从纯噪声开始，利用神经网络一步步预测并减去噪声，最终恢复出清晰的数据。" },
+            
+            { id: "马尔可夫链", group: 5, radius: 18, desc: "一种随机过程，其核心特性是“无记忆性”：当前状态转移到下一状态的概率，仅仅依赖于当前状态，而与过去的历史状态无关。扩散模型的前向和反向都基于此假设。" },
+            { id: "高斯噪声", group: 5, radius: 18, desc: "正态分布的噪声。在扩散模型中，为了数学推导的便利和自然界的普遍规律，我们通常假设每一步注入的都是高斯噪声。" },
+            { id: "变分下界(ELBO)", group: 5, radius: 18, desc: "Variational Lower Bound。由于直接最大化数据的似然函数在数学上极其困难，扩散模型通过优化对数似然的变分下界来进行网络训练。" },
+            
+            { id: "原始数据 x₀", group: 3, radius: 20, desc: "真实世界中的干净样本数据，例如一张清晰的猫的图片。这是前向过程的起点，也是反向生成过程试图逼近的最终目标。" },
+            { id: "纯噪声 x_T", group: 3, radius: 20, desc: "经过T次添加噪声后，数据已经完全失去了原始特征，变成了服从标准正态分布的各向同性高斯噪声。" },
+            
+            { id: "U-Net架构", group: 4, radius: 22, desc: "一种经典的深度卷积神经网络架构。在图像扩散模型中被广泛使用，其特点是具有跳跃连接的编码器-解码器结构，非常适合处理输入和输出尺寸相同的像素级预测任务。" },
+            { id: "噪声预测", group: 4, radius: 20, desc: "这是U-Net在扩散模型中的核心任务。网络并不直接预测干净图像，而是预测在特定时间步t被添加到数据上的噪声 ε。" },
+            { id: "时间步 t", group: 4, radius: 18, desc: "一个标识当前处于扩散/去噪进度哪个阶段的变量。它被编码后作为条件输入给神经网络，告诉网络“现在数据的破坏程度有多深”。" },
+            
+            { id: "DDPM", group: 6, radius: 20, desc: "去噪扩散概率模型 (Denoising Diffusion Probabilistic Models)。最经典的扩散模型理论框架，奠定了后续发展的基础。" },
+            { id: "DDIM", group: 6, radius: 20, desc: "去噪扩散隐式模型 (Denoising Diffusion Implicit Models)。DDPM的一种改进版本，允许跨步采样，从而极大地加快了反向生成的速度。" },
+            { id: "条件引导", group: 6, radius: 20, desc: "如 Classifier-Free Guidance (CFG)。它允许我们在生成过程中输入文本条件（如“画一只赛博朋克猫”），从而引导扩散模型朝着符合条件的方向去噪。" },
+            { id: "潜在空间(Latent)", group: 6, radius: 20, desc: "Latent Diffusion Models (如Stable Diffusion的核心)。将扩散过程从高维的像素空间转移到低维的特征（潜在）空间中进行，大幅降低了计算成本。" }
+        ];
+
+        const linksData = [
+            { source: "扩散模型", target: "前向过程", label: "包含" },
+            { source: "扩散模型", target: "反向过程", label: "包含" },
+            { source: "扩散模型", target: "DDPM", label: "基础理论" },
+            { source: "扩散模型", target: "DDIM", label: "加速变体" },
+            { source: "扩散模型", target: "条件引导", label: "可控生成" },
+            { source: "扩散模型", target: "潜在空间(Latent)", label: "降维加速" },
+            
+            { source: "原始数据 x₀", target: "前向过程", label: "加噪起点" },
+            { source: "前向过程", target: "马尔可夫链", label: "遵循假设" },
+            { source: "前向过程", target: "高斯噪声", label: "逐步注入" },
+            { source: "前向过程", target: "纯噪声 x_T", label: "最终坍缩" },
+            
+            { source: "纯噪声 x_T", target: "反向过程", label: "去噪起点" },
+            { source: "反向过程", target: "马尔可夫链", label: "遵循假设" },
+            { source: "反向过程", target: "U-Net架构", label: "核心计算" },
+            { source: "反向过程", target: "原始数据 x₀", label: "重建目标" },
+            
+            { source: "U-Net架构", target: "噪声预测", label: "执行任务" },
+            { source: "时间步 t", target: "U-Net架构", label: "进度条件" },
+            { source: "条件引导", target: "U-Net架构", label: "语义输入" },
+            
+            { source: "变分下界(ELBO)", target: "噪声预测", label: "数学等价为" },
+            { source: "反向过程", target: "变分下界(ELBO)", label: "优化目标" }
+        ];
+
+        // --- 2. 初始化 SVG & D3 设置 ---
+        const container = document.getElementById("graph-container");
+        let width = container.clientWidth;
+        let height = container.clientHeight;
+
+        const svg = d3.select("#network")
+            .attr("viewBox", [0, 0, width, height]);
+
+        // 定义箭头标记
+        svg.append("defs").selectAll("marker")
+            .data(["arrow"])
+            .enter().append("marker")
+            .attr("id", String)
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 28) // 将根据节点半径动态调整视觉，这里设个基准值
+            .attr("refY", 0)
+            .attr("markerWidth", 6)
+            .attr("markerHeight", 6)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("fill", "#475569")
+            .attr("d", "M0,-5L10,0L0,5");
+
+        const g = svg.append("g");
+
+        // 缩放支持
+        const zoom = d3.zoom()
+            .scaleExtent([0.3, 3])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+        svg.call(zoom);
+        // 禁用双击缩放，以免和点击冲突
+        svg.on("dblclick.zoom", null); 
+
+        // --- 3. 建立关系字典（用于点击高亮） ---
+        const linkedByIndex = {};
+        linksData.forEach(d => {
+            linkedByIndex[`${d.source},${d.target}`] = true;
+            linkedByIndex[`${d.target},${d.source}`] = true;
+        });
+
+        function isConnected(a, b) {
+            return linkedByIndex[`${a.id},${b.id}`] || a.id === b.id;
+        }
+
+        // --- 4. 配置力导向图 (Force Simulation) ---
+        const simulation = d3.forceSimulation(nodesData)
+            .force("link", d3.forceLink(linksData).id(d => d.id).distance(130))
+            .force("charge", d3.forceManyBody().strength(-800))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collide", d3.forceCollide().radius(d => d.radius + 15).iterations(2));
+
+        // --- 5. 绘制图形元素 ---
+        
+        // 绘制连线
+        const link = g.append("g")
+            .selectAll("line")
+            .data(linksData)
+            .enter().append("line")
+            .attr("class", "link")
+            .attr("marker-end", "url(#arrow)");
+
+        // 绘制连线文字
+        const linkText = g.append("g")
+            .selectAll("text")
+            .data(linksData)
+            .enter().append("text")
+            .attr("class", "link-label")
+            .attr("dy", -4)
+            .text(d => d.label);
+
+        // 绘制节点组
+        const node = g.append("g")
+            .selectAll("g")
+            .data(nodesData)
+            .enter().append("g")
+            .attr("class", "node")
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+        // 绘制圆形
+        node.append("circle")
+            .attr("r", d => d.radius)
+            .attr("fill", d => groups[d.group].color);
+
+        // 绘制节点文字
+        node.append("text")
+            .attr("dy", d => d.radius + 16)
+            .text(d => d.id);
+
+        // --- 6. 交互逻辑 (点击高亮 & 信息面板) ---
+        let activeNode = null;
+
+        function updatePanel(d) {
+            document.getElementById('default-msg').style.display = 'none';
+            document.getElementById('node-details').style.display = 'block';
+            
+            const groupInfo = groups[d.group];
+            
+            const catEl = document.getElementById('detail-category');
+            catEl.textContent = groupInfo.name;
+            catEl.style.color = groupInfo.color;
+            
+            document.getElementById('detail-title').textContent = d.id;
+            document.getElementById('detail-title').style.color = groupInfo.color;
+            
+            document.getElementById('detail-desc').textContent = d.desc;
+        }
+
+        function hidePanel() {
+            document.getElementById('default-msg').style.display = 'block';
+            document.getElementById('node-details').style.display = 'none';
+        }
+
+        node.on("click", function(event, d) {
+            event.stopPropagation(); // 阻止冒泡到背景的点击事件
+            activeNode = d;
+            
+            // 更新面板
+            updatePanel(d);
+
+            // 高亮逻辑：计算非关联节点降低透明度
+            node.style("opacity", function(o) {
+                return isConnected(d, o) ? 1 : 0.1;
+            });
+            
+            // 选中的节点自身加粗发光效果通过CSS实现，但需确保其可见性
+            
+            // 连线逻辑：只显示与当前节点相关的连线
+            link.style("stroke-opacity", function(o) {
+                return (o.source.id === d.id || o.target.id === d.id) ? 1 : 0.05;
+            });
+            
+            // 箭头也根据透明度淡化（通过改变marker的源或这里简单将线条变淡即可，复杂的话需要动态分配marker）
+
+            // 连线文字逻辑：只显示相关文字
+            linkText.style("opacity", function(o) {
+                return (o.source.id === d.id || o.target.id === d.id) ? 1 : 0;
+            });
+        });
+
+        svg.on("click", function() {
+            activeNode = null;
+            hidePanel();
+            
+            // 恢复所有节点的透明度
+            node.style("opacity", 1);
+            link.style("stroke-opacity", 0.6);
+            linkText.style("opacity", 1);
+        });
+
+        // --- 7. 物理引擎更新跳动 (Tick) ---
+        simulation.on("tick", () => {
+            // 约束节点不跑出屏幕可视范围太多（软边界）
+            nodesData.forEach(d => {
+                d.x = Math.max(50, Math.min(width - 50, d.x));
+                d.y = Math.max(50, Math.min(height - 50, d.y));
+            });
+
+            // 更新连线位置
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            // 动态计算箭头偏移量（防止被节点盖住）
+            link.attr("marker-end", d => {
+                // 根据目标节点半径调整连线终点视觉效果。
+                // D3绘制时，终点在圆心，需将终点回退目标半径的距离。
+                // 为简便，通过调整 defs里的 refX 实现，这里通过不同class或统一调整即可。
+                // 此处我们统一设置了 refX=28，已经兼顾了大部分半径。如果想完美：
+                return "url(#arrow)";
+            });
+
+            // 更新连线文字位置（居中）
+            linkText
+                .attr("x", d => (d.source.x + d.target.x) / 2)
+                .attr("y", d => (d.source.y + d.target.y) / 2);
+
+            // 更新节点位置
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        });
+
+        // --- 8. 拖拽相关函数 ---
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        // --- 9. 窗口大小自适应 ---
+        window.addEventListener('resize', () => {
+            width = container.clientWidth;
+            height = container.clientHeight;
+            svg.attr("viewBox", [0, 0, width, height]);
+            simulation.force("center", d3.forceCenter(width / 2, height / 2));
+            simulation.alpha(0.3).restart();
+        });
+
+    </script>
+</body>
+</html>
